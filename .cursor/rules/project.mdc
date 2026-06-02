@@ -1,0 +1,43 @@
+---
+description: Restaurant Admin Builder project rules
+alwaysApply: true
+---
+
+Project: Restaurant Website Admin Builder
+
+Stack:
+
+* Next.js App Router
+* TypeScript
+* Tailwind CSS
+* Supabase Auth
+* Supabase Postgres
+* Supabase Storage
+* Vercel
+
+Architecture:
+
+* Use one Supabase project.
+* Use one Next.js app.
+* Use one Vercel deployment.
+* Separate restaurant data by restaurant_id.
+* Do not create separate apps per restaurant.
+* Do not create separate Vercel deployments per restaurant in MVP.
+* Do not build a drag-and-drop editor.
+* Do not build online ordering or payments in MVP.
+* Public restaurant pages live at /r/[slug].
+* Admin pages live under /dashboard.
+
+Target users:
+
+* Older small restaurant owners in Minnesota.
+* UI must be simple, large, clear, and easy to use.
+* Prefer template-based design controls over free-form editing.
+* Use plain language in the UI.
+
+Security:
+
+* Never expose Supabase service_role key on the client.
+* All restaurant-owned data must be protected with RLS.
+* Restaurant owners can only access restaurants where they are members.
+* Public users can only read published restaurant data.
