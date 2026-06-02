@@ -1,12 +1,12 @@
 import Card from "@/components/ui/card";
 import SectionTitle from "@/components/ui/section-title";
-import { getDesignByRestaurantId, demoRestaurant } from "@/lib/placeholder-data";
+import { getSiteSettingsByRestaurantId, demoRestaurant } from "@/lib/placeholder-data";
 
-const templateOptions = ["Classic", "Warm", "Minimal"] as const;
+const templateOptions = ["classic", "warm", "minimal"] as const;
 const colorOptions = ["#14532d", "#9a3412", "#1d4ed8", "#6d28d9"];
 
 export default function DesignSettingsPage() {
-  const design = getDesignByRestaurantId(demoRestaurant.id);
+  const siteSettings = getSiteSettingsByRestaurantId(demoRestaurant.id);
 
   return (
     <main className="space-y-4">
@@ -19,7 +19,7 @@ export default function DesignSettingsPage() {
         <h2 className="text-xl font-semibold text-zinc-900">Template</h2>
         <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-3">
           {templateOptions.map((template) => {
-            const selected = design?.template === template;
+            const selected = siteSettings?.template_id === template;
             return (
               <button
                 key={template}
@@ -30,7 +30,7 @@ export default function DesignSettingsPage() {
                     : "bg-zinc-50 text-zinc-900"
                 }`}
               >
-                {template}
+                {template.charAt(0).toUpperCase() + template.slice(1)}
               </button>
             );
           })}

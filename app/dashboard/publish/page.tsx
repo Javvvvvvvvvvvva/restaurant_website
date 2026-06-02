@@ -7,7 +7,10 @@ export default function PublishPage() {
   const checklist = [
     { label: "Restaurant info completed", done: true },
     { label: `At least 3 menu items (current: ${demoMenu.length})`, done: demoMenu.length >= 3 },
-    { label: `At least 1 active notice (current: ${demoNotices.filter((n) => n.active).length})`, done: demoNotices.some((n) => n.active) },
+    {
+      label: `At least 1 active notice (current: ${demoNotices.filter((n) => n.is_active).length})`,
+      done: demoNotices.some((n) => n.is_active),
+    },
     { label: "Design template selected", done: true },
   ];
 

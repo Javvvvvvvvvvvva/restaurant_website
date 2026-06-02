@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import Link from "next/link";
 import DashboardNav from "@/components/dashboard/dashboard-nav";
+import LogoutButton from "@/components/dashboard/logout-button";
 
 export default function DashboardLayout({ children }: { children: ReactNode }) {
   return (
@@ -12,6 +13,7 @@ export default function DashboardLayout({ children }: { children: ReactNode }) {
           </Link>
           <p className="mb-4 text-base text-zinc-600">Simple tools to manage your website.</p>
           <DashboardNav />
+          <LogoutButton />
         </aside>
         <section>{children}</section>
       </div>

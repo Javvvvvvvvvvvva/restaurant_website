@@ -1,500 +1,553 @@
--- Restaurant Website Admin Builder — initial schema, RLS, indexes, triggers
+-- Multi-tenant restaurant admin builder schema and RLS.
 
--- ---------------------------------------------------------------------------
--- Extensions
--- ---------------------------------------------------------------------------
+create extension if not exists "pgcrypto";
 
-CREATE EXTENSION IF NOT EXISTS "pgcrypto";
-
--- ---------------------------------------------------------------------------
--- Helper functions
--- ---------------------------------------------------------------------------
-
-CREATE OR REPLACE FUNCTION public.set_updated_at()
-RETURNS TRIGGER
-LANGUAGE plpgsql
-AS $$
-BEGIN
-  NEW.updated_at = timezone('utc', now());
-  RETURN NEW;
-END;
-$$;
-
-CREATE OR REPLACE FUNCTION public.is_restaurant_member(p_restaurant_id uuid)
-RETURNS boolean
-LANGUAGE sql
-STABLE
-SECURITY DEFINER
-SET search_path = public
-AS $$
-  SELECT EXISTS (
-    SELECT 1
-    FROM public.restaurant_members rm
-    WHERE rm.restaurant_id = p_restaurant_id
-      AND rm.user_id = auth.uid()
-  );
-$$;
-
-CREATE OR REPLACE FUNCTION public.is_restaurant_owner(p_restaurant_id uuid)
-RETURNS boolean
-LANGUAGE sql
-STABLE
-SECURITY DEFINER
-SET search_path = public
-AS $$
-  SELECT EXISTS (
-    SELECT 1
-    FROM public.restaurant_members rm
-    WHERE rm.restaurant_id = p_restaurant_id
-      AND rm.user_id = auth.uid()
-      AND rm.role = 'owner'
-  );
-$$;
-
-CREATE OR REPLACE FUNCTION public.is_restaurant_published(p_restaurant_id uuid)
-RETURNS boolean
-LANGUAGE sql
-STABLE
-SECURITY DEFINER
-SET search_path = public
-AS $$
-  SELECT EXISTS (
-    SELECT 1
-    FROM public.restaurants r
-    WHERE r.id = p_restaurant_id
-      AND r.is_published = true
-  );
-$$;
-
-CREATE OR REPLACE FUNCTION public.handle_new_restaurant()
-RETURNS TRIGGER
-LANGUAGE plpgsql
-SECURITY DEFINER
-SET search_path = public
-AS $$
-BEGIN
-  INSERT INTO public.restaurant_members (restaurant_id, user_id, role)
-  VALUES (NEW.id, NEW.owner_id, 'owner')
-  ON CONFLICT (restaurant_id, user_id) DO NOTHING;
-
-  RETURN NEW;
-END;
-$$;
-
--- ---------------------------------------------------------------------------
--- Tables
--- ---------------------------------------------------------------------------
-
-CREATE TABLE public.profiles (
-  id uuid PRIMARY KEY REFERENCES auth.users (id) ON DELETE CASCADE,
+create table public.profiles (
+  id uuid primary key references auth.users (id) on delete cascade,
   full_name text,
   email text,
-  created_at timestamptz NOT NULL DEFAULT timezone('utc', now()),
-  updated_at timestamptz NOT NULL DEFAULT timezone('utc', now())
+  created_at timestamptz not null default timezone('utc', now()),
+  updated_at timestamptz not null default timezone('utc', now())
 );
 
-CREATE TABLE public.restaurants (
-  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  owner_id uuid NOT NULL REFERENCES auth.users (id) ON DELETE RESTRICT,
-  slug text NOT NULL UNIQUE,
-  name text NOT NULL,
+create table public.restaurants (
+  id uuid primary key default gen_random_uuid(),
+  owner_id uuid not null references auth.users (id) on delete restrict,
+  slug text not null unique check (slug ~ '^[a-z0-9]+(?:-[a-z0-9]+)*$'),
+  name text not null,
   phone text,
   address text,
   hours text,
   description text,
   logo_url text,
   hero_image_url text,
-  is_published boolean NOT NULL DEFAULT false,
+  is_published boolean not null default false,
   published_at timestamptz,
-  created_at timestamptz NOT NULL DEFAULT timezone('utc', now()),
-  updated_at timestamptz NOT NULL DEFAULT timezone('utc', now())
+  created_at timestamptz not null default timezone('utc', now()),
+  updated_at timestamptz not null default timezone('utc', now())
 );
 
-CREATE TABLE public.restaurant_members (
-  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  restaurant_id uuid NOT NULL REFERENCES public.restaurants (id) ON DELETE CASCADE,
-  user_id uuid NOT NULL REFERENCES auth.users (id) ON DELETE CASCADE,
-  role text NOT NULL CHECK (role IN ('owner', 'staff')),
-  created_at timestamptz NOT NULL DEFAULT timezone('utc', now()),
-  UNIQUE (restaurant_id, user_id)
+create table public.restaurant_members (
+  id uuid primary key default gen_random_uuid(),
+  restaurant_id uuid not null references public.restaurants (id) on delete cascade,
+  user_id uuid not null references auth.users (id) on delete cascade,
+  role text not null check (role in ('owner', 'staff')),
+  created_at timestamptz not null default timezone('utc', now()),
+  unique (restaurant_id, user_id)
 );
 
-CREATE TABLE public.menu_categories (
-  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  restaurant_id uuid NOT NULL REFERENCES public.restaurants (id) ON DELETE CASCADE,
-  name text NOT NULL,
-  sort_order integer NOT NULL DEFAULT 0,
-  created_at timestamptz NOT NULL DEFAULT timezone('utc', now()),
-  updated_at timestamptz NOT NULL DEFAULT timezone('utc', now())
+create table public.menu_categories (
+  id uuid primary key default gen_random_uuid(),
+  restaurant_id uuid not null references public.restaurants (id) on delete cascade,
+  name text not null,
+  sort_order integer not null default 0,
+  created_at timestamptz not null default timezone('utc', now()),
+  updated_at timestamptz not null default timezone('utc', now()),
+  unique (id, restaurant_id)
 );
 
-CREATE TABLE public.menu_items (
-  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  restaurant_id uuid NOT NULL REFERENCES public.restaurants (id) ON DELETE CASCADE,
-  category_id uuid REFERENCES public.menu_categories (id) ON DELETE SET NULL,
-  name text NOT NULL,
+create table public.menu_items (
+  id uuid primary key default gen_random_uuid(),
+  restaurant_id uuid not null references public.restaurants (id) on delete cascade,
+  category_id uuid,
+  name text not null,
   description text,
-  price numeric(10, 2),
+  price numeric(10, 2) check (price is null or price >= 0),
   image_url text,
-  is_available boolean NOT NULL DEFAULT true,
-  sort_order integer NOT NULL DEFAULT 0,
-  created_at timestamptz NOT NULL DEFAULT timezone('utc', now()),
-  updated_at timestamptz NOT NULL DEFAULT timezone('utc', now())
+  is_available boolean not null default true,
+  sort_order integer not null default 0,
+  created_at timestamptz not null default timezone('utc', now()),
+  updated_at timestamptz not null default timezone('utc', now()),
+  foreign key (category_id, restaurant_id)
+    references public.menu_categories (id, restaurant_id)
+    on delete set null (category_id)
 );
 
-CREATE TABLE public.notices (
-  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  restaurant_id uuid NOT NULL REFERENCES public.restaurants (id) ON DELETE CASCADE,
-  title text NOT NULL,
+create table public.notices (
+  id uuid primary key default gen_random_uuid(),
+  restaurant_id uuid not null references public.restaurants (id) on delete cascade,
+  title text not null,
   message text,
-  is_active boolean NOT NULL DEFAULT true,
-  created_at timestamptz NOT NULL DEFAULT timezone('utc', now()),
-  updated_at timestamptz NOT NULL DEFAULT timezone('utc', now())
+  is_active boolean not null default true,
+  created_at timestamptz not null default timezone('utc', now()),
+  updated_at timestamptz not null default timezone('utc', now())
 );
 
-CREATE TABLE public.site_settings (
-  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  restaurant_id uuid NOT NULL UNIQUE REFERENCES public.restaurants (id) ON DELETE CASCADE,
-  template_id text NOT NULL DEFAULT 'classic',
-  primary_color text NOT NULL DEFAULT '#b91c1c',
-  background_color text NOT NULL DEFAULT '#fff7ed',
-  button_style text NOT NULL DEFAULT 'rounded',
-  show_gallery boolean NOT NULL DEFAULT true,
-  show_notices boolean NOT NULL DEFAULT true,
-  show_contact_form boolean NOT NULL DEFAULT false,
-  created_at timestamptz NOT NULL DEFAULT timezone('utc', now()),
-  updated_at timestamptz NOT NULL DEFAULT timezone('utc', now())
+create table public.site_settings (
+  id uuid primary key default gen_random_uuid(),
+  restaurant_id uuid not null unique references public.restaurants (id) on delete cascade,
+  template_id text not null default 'classic',
+  primary_color text not null default '#b91c1c',
+  background_color text not null default '#fff7ed',
+  button_style text not null default 'rounded',
+  show_gallery boolean not null default true,
+  show_notices boolean not null default true,
+  show_contact_form boolean not null default false,
+  created_at timestamptz not null default timezone('utc', now()),
+  updated_at timestamptz not null default timezone('utc', now())
 );
 
-CREATE TABLE public.media (
-  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  restaurant_id uuid NOT NULL REFERENCES public.restaurants (id) ON DELETE CASCADE,
-  file_url text NOT NULL,
+create table public.media (
+  id uuid primary key default gen_random_uuid(),
+  restaurant_id uuid not null references public.restaurants (id) on delete cascade,
+  file_url text not null,
   file_type text,
   alt_text text,
-  created_at timestamptz NOT NULL DEFAULT timezone('utc', now())
+  created_at timestamptz not null default timezone('utc', now())
 );
 
--- ---------------------------------------------------------------------------
--- Indexes
--- ---------------------------------------------------------------------------
+create index restaurants_owner_id_idx on public.restaurants (owner_id);
+create index restaurants_slug_idx on public.restaurants (slug);
+create index restaurants_published_idx on public.restaurants (is_published) where is_published = true;
 
-CREATE INDEX idx_restaurants_owner_id ON public.restaurants (owner_id);
-CREATE INDEX idx_restaurants_slug ON public.restaurants (slug);
-CREATE INDEX idx_restaurants_is_published ON public.restaurants (is_published);
+create index restaurant_members_restaurant_id_idx on public.restaurant_members (restaurant_id);
+create index restaurant_members_user_id_idx on public.restaurant_members (user_id);
+create index restaurant_members_user_restaurant_role_idx on public.restaurant_members (user_id, restaurant_id, role);
 
-CREATE INDEX idx_restaurant_members_restaurant_id ON public.restaurant_members (restaurant_id);
-CREATE INDEX idx_restaurant_members_user_id ON public.restaurant_members (user_id);
+create index menu_categories_restaurant_sort_idx on public.menu_categories (restaurant_id, sort_order);
+create index menu_items_restaurant_sort_idx on public.menu_items (restaurant_id, sort_order);
+create index menu_items_category_sort_idx on public.menu_items (category_id, sort_order);
+create index notices_restaurant_id_idx on public.notices (restaurant_id);
+create index site_settings_restaurant_id_idx on public.site_settings (restaurant_id);
+create index media_restaurant_id_idx on public.media (restaurant_id);
 
-CREATE INDEX idx_menu_categories_restaurant_id ON public.menu_categories (restaurant_id);
-CREATE INDEX idx_menu_items_restaurant_id ON public.menu_items (restaurant_id);
-CREATE INDEX idx_menu_items_category_id ON public.menu_items (category_id);
-CREATE INDEX idx_notices_restaurant_id ON public.notices (restaurant_id);
-CREATE INDEX idx_site_settings_restaurant_id ON public.site_settings (restaurant_id);
-CREATE INDEX idx_media_restaurant_id ON public.media (restaurant_id);
+create or replace function public.set_updated_at()
+returns trigger
+language plpgsql
+as $$
+begin
+  new.updated_at = timezone('utc', now());
+  return new;
+end;
+$$;
 
--- ---------------------------------------------------------------------------
--- updated_at triggers
--- ---------------------------------------------------------------------------
+create or replace function public.is_restaurant_member(p_restaurant_id uuid)
+returns boolean
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select exists (
+    select 1
+    from public.restaurant_members rm
+    where rm.restaurant_id = p_restaurant_id
+      and rm.user_id = auth.uid()
+  );
+$$;
 
-CREATE TRIGGER set_profiles_updated_at
-  BEFORE UPDATE ON public.profiles
-  FOR EACH ROW
-  EXECUTE FUNCTION public.set_updated_at();
+create or replace function public.is_restaurant_owner(p_restaurant_id uuid)
+returns boolean
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select exists (
+    select 1
+    from public.restaurant_members rm
+    where rm.restaurant_id = p_restaurant_id
+      and rm.user_id = auth.uid()
+      and rm.role = 'owner'
+  );
+$$;
 
-CREATE TRIGGER set_restaurants_updated_at
-  BEFORE UPDATE ON public.restaurants
-  FOR EACH ROW
-  EXECUTE FUNCTION public.set_updated_at();
+create or replace function public.is_restaurant_published(p_restaurant_id uuid)
+returns boolean
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select exists (
+    select 1
+    from public.restaurants r
+    where r.id = p_restaurant_id
+      and r.is_published = true
+  );
+$$;
 
-CREATE TRIGGER set_menu_categories_updated_at
-  BEFORE UPDATE ON public.menu_categories
-  FOR EACH ROW
-  EXECUTE FUNCTION public.set_updated_at();
+create or replace function public.handle_new_restaurant()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  insert into public.restaurant_members (restaurant_id, user_id, role)
+  values (new.id, new.owner_id, 'owner')
+  on conflict (restaurant_id, user_id) do nothing;
 
-CREATE TRIGGER set_menu_items_updated_at
-  BEFORE UPDATE ON public.menu_items
-  FOR EACH ROW
-  EXECUTE FUNCTION public.set_updated_at();
+  insert into public.site_settings (restaurant_id)
+  values (new.id)
+  on conflict (restaurant_id) do nothing;
 
-CREATE TRIGGER set_notices_updated_at
-  BEFORE UPDATE ON public.notices
-  FOR EACH ROW
-  EXECUTE FUNCTION public.set_updated_at();
+  return new;
+end;
+$$;
 
-CREATE TRIGGER set_site_settings_updated_at
-  BEFORE UPDATE ON public.site_settings
-  FOR EACH ROW
-  EXECUTE FUNCTION public.set_updated_at();
+create or replace function public.handle_new_user()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  insert into public.profiles (id, full_name, email)
+  values (
+    new.id,
+    new.raw_user_meta_data ->> 'full_name',
+    new.email
+  )
+  on conflict (id) do update
+    set email = excluded.email;
 
-CREATE TRIGGER on_restaurant_created
-  AFTER INSERT ON public.restaurants
-  FOR EACH ROW
-  EXECUTE FUNCTION public.handle_new_restaurant();
+  return new;
+end;
+$$;
 
--- ---------------------------------------------------------------------------
--- Row Level Security
--- ---------------------------------------------------------------------------
+create or replace function public.set_restaurant_publish_state()
+returns trigger
+language plpgsql
+as $$
+begin
+  if old.owner_id <> new.owner_id then
+    raise exception 'restaurant owner_id cannot be changed';
+  end if;
 
-ALTER TABLE public.profiles ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.restaurants ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.restaurant_members ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.menu_categories ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.menu_items ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.notices ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.site_settings ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.media ENABLE ROW LEVEL SECURITY;
+  if new.is_published = true and old.is_published = false then
+    new.published_at = timezone('utc', now());
+  elsif new.is_published = false then
+    new.published_at = null;
+  end if;
 
--- profiles ------------------------------------------------------------------
+  return new;
+end;
+$$;
 
-CREATE POLICY "profiles_select_own"
-  ON public.profiles
-  FOR SELECT
-  TO authenticated
-  USING (id = auth.uid());
+create trigger profiles_set_updated_at
+  before update on public.profiles
+  for each row execute function public.set_updated_at();
 
-CREATE POLICY "profiles_insert_own"
-  ON public.profiles
-  FOR INSERT
-  TO authenticated
-  WITH CHECK (id = auth.uid());
+create trigger restaurants_set_publish_state
+  before update on public.restaurants
+  for each row execute function public.set_restaurant_publish_state();
 
-CREATE POLICY "profiles_update_own"
-  ON public.profiles
-  FOR UPDATE
-  TO authenticated
-  USING (id = auth.uid())
-  WITH CHECK (id = auth.uid());
+create trigger restaurants_set_updated_at
+  before update on public.restaurants
+  for each row execute function public.set_updated_at();
 
--- restaurants ---------------------------------------------------------------
+create trigger restaurants_after_insert
+  after insert on public.restaurants
+  for each row execute function public.handle_new_restaurant();
 
-CREATE POLICY "restaurants_select_member_or_published"
-  ON public.restaurants
-  FOR SELECT
-  TO anon, authenticated
-  USING (
-    public.is_restaurant_member(id)
-    OR is_published = true
+create trigger users_after_insert
+  after insert on auth.users
+  for each row execute function public.handle_new_user();
+
+create trigger menu_categories_set_updated_at
+  before update on public.menu_categories
+  for each row execute function public.set_updated_at();
+
+create trigger menu_items_set_updated_at
+  before update on public.menu_items
+  for each row execute function public.set_updated_at();
+
+create trigger notices_set_updated_at
+  before update on public.notices
+  for each row execute function public.set_updated_at();
+
+create trigger site_settings_set_updated_at
+  before update on public.site_settings
+  for each row execute function public.set_updated_at();
+
+alter table public.profiles enable row level security;
+alter table public.restaurants enable row level security;
+alter table public.restaurant_members enable row level security;
+alter table public.menu_categories enable row level security;
+alter table public.menu_items enable row level security;
+alter table public.notices enable row level security;
+alter table public.site_settings enable row level security;
+alter table public.media enable row level security;
+
+create policy profiles_select_own
+  on public.profiles
+  for select
+  to authenticated
+  using (id = auth.uid());
+
+create policy profiles_insert_own
+  on public.profiles
+  for insert
+  to authenticated
+  with check (id = auth.uid());
+
+create policy profiles_update_own
+  on public.profiles
+  for update
+  to authenticated
+  using (id = auth.uid())
+  with check (id = auth.uid());
+
+create policy restaurants_select_public_published
+  on public.restaurants
+  for select
+  to anon
+  using (is_published = true);
+
+create policy restaurants_select_member_or_published
+  on public.restaurants
+  for select
+  to authenticated
+  using (
+    is_published = true
+    or public.is_restaurant_member(id)
   );
 
-CREATE POLICY "restaurants_insert_owner"
-  ON public.restaurants
-  FOR INSERT
-  TO authenticated
-  WITH CHECK (owner_id = auth.uid());
+create policy restaurants_insert_owner
+  on public.restaurants
+  for insert
+  to authenticated
+  with check (owner_id = auth.uid());
 
-CREATE POLICY "restaurants_update_member"
-  ON public.restaurants
-  FOR UPDATE
-  TO authenticated
-  USING (public.is_restaurant_member(id))
-  WITH CHECK (public.is_restaurant_member(id));
+create policy restaurants_update_owner
+  on public.restaurants
+  for update
+  to authenticated
+  using (public.is_restaurant_owner(id))
+  with check (public.is_restaurant_owner(id));
 
-CREATE POLICY "restaurants_delete_owner"
-  ON public.restaurants
-  FOR DELETE
-  TO authenticated
-  USING (public.is_restaurant_owner(id));
+create policy restaurants_delete_owner
+  on public.restaurants
+  for delete
+  to authenticated
+  using (public.is_restaurant_owner(id));
 
--- restaurant_members --------------------------------------------------------
+create policy restaurant_members_select_member
+  on public.restaurant_members
+  for select
+  to authenticated
+  using (public.is_restaurant_member(restaurant_id));
 
-CREATE POLICY "restaurant_members_select_member"
-  ON public.restaurant_members
-  FOR SELECT
-  TO authenticated
-  USING (public.is_restaurant_member(restaurant_id));
+create policy restaurant_members_insert_owner
+  on public.restaurant_members
+  for insert
+  to authenticated
+  with check (public.is_restaurant_owner(restaurant_id));
 
-CREATE POLICY "restaurant_members_insert_owner"
-  ON public.restaurant_members
-  FOR INSERT
-  TO authenticated
-  WITH CHECK (public.is_restaurant_owner(restaurant_id));
-
-CREATE POLICY "restaurant_members_update_owner"
-  ON public.restaurant_members
-  FOR UPDATE
-  TO authenticated
-  USING (public.is_restaurant_owner(restaurant_id))
-  WITH CHECK (public.is_restaurant_owner(restaurant_id));
-
-CREATE POLICY "restaurant_members_delete_owner"
-  ON public.restaurant_members
-  FOR DELETE
-  TO authenticated
-  USING (public.is_restaurant_owner(restaurant_id));
-
--- menu_categories -----------------------------------------------------------
-
-CREATE POLICY "menu_categories_select_member_or_published"
-  ON public.menu_categories
-  FOR SELECT
-  TO anon, authenticated
-  USING (
-    public.is_restaurant_member(restaurant_id)
-    OR public.is_restaurant_published(restaurant_id)
+create policy restaurant_members_update_owner
+  on public.restaurant_members
+  for update
+  to authenticated
+  using (
+    public.is_restaurant_owner(restaurant_id)
+    and user_id <> auth.uid()
+    and role <> 'owner'
+  )
+  with check (
+    public.is_restaurant_owner(restaurant_id)
+    and user_id <> auth.uid()
+    and role = 'staff'
   );
 
-CREATE POLICY "menu_categories_insert_member"
-  ON public.menu_categories
-  FOR INSERT
-  TO authenticated
-  WITH CHECK (public.is_restaurant_member(restaurant_id));
-
-CREATE POLICY "menu_categories_update_member"
-  ON public.menu_categories
-  FOR UPDATE
-  TO authenticated
-  USING (public.is_restaurant_member(restaurant_id))
-  WITH CHECK (public.is_restaurant_member(restaurant_id));
-
-CREATE POLICY "menu_categories_delete_member"
-  ON public.menu_categories
-  FOR DELETE
-  TO authenticated
-  USING (public.is_restaurant_member(restaurant_id));
-
--- menu_items ----------------------------------------------------------------
-
-CREATE POLICY "menu_items_select_member_or_published"
-  ON public.menu_items
-  FOR SELECT
-  TO anon, authenticated
-  USING (
-    public.is_restaurant_member(restaurant_id)
-    OR public.is_restaurant_published(restaurant_id)
+create policy restaurant_members_delete_owner
+  on public.restaurant_members
+  for delete
+  to authenticated
+  using (
+    public.is_restaurant_owner(restaurant_id)
+    and user_id <> auth.uid()
+    and role <> 'owner'
   );
 
-CREATE POLICY "menu_items_insert_member"
-  ON public.menu_items
-  FOR INSERT
-  TO authenticated
-  WITH CHECK (public.is_restaurant_member(restaurant_id));
+create policy menu_categories_select_public_published
+  on public.menu_categories
+  for select
+  to anon
+  using (public.is_restaurant_published(restaurant_id));
 
-CREATE POLICY "menu_items_update_member"
-  ON public.menu_items
-  FOR UPDATE
-  TO authenticated
-  USING (public.is_restaurant_member(restaurant_id))
-  WITH CHECK (public.is_restaurant_member(restaurant_id));
-
-CREATE POLICY "menu_items_delete_member"
-  ON public.menu_items
-  FOR DELETE
-  TO authenticated
-  USING (public.is_restaurant_member(restaurant_id));
-
--- notices -------------------------------------------------------------------
-
-CREATE POLICY "notices_select_member_or_published"
-  ON public.notices
-  FOR SELECT
-  TO anon, authenticated
-  USING (
-    public.is_restaurant_member(restaurant_id)
-    OR public.is_restaurant_published(restaurant_id)
+create policy menu_categories_select_member_or_published
+  on public.menu_categories
+  for select
+  to authenticated
+  using (
+    public.is_restaurant_published(restaurant_id)
+    or public.is_restaurant_member(restaurant_id)
   );
 
-CREATE POLICY "notices_insert_member"
-  ON public.notices
-  FOR INSERT
-  TO authenticated
-  WITH CHECK (public.is_restaurant_member(restaurant_id));
+create policy menu_categories_insert_member
+  on public.menu_categories
+  for insert
+  to authenticated
+  with check (public.is_restaurant_member(restaurant_id));
 
-CREATE POLICY "notices_update_member"
-  ON public.notices
-  FOR UPDATE
-  TO authenticated
-  USING (public.is_restaurant_member(restaurant_id))
-  WITH CHECK (public.is_restaurant_member(restaurant_id));
+create policy menu_categories_update_member
+  on public.menu_categories
+  for update
+  to authenticated
+  using (public.is_restaurant_member(restaurant_id))
+  with check (public.is_restaurant_member(restaurant_id));
 
-CREATE POLICY "notices_delete_member"
-  ON public.notices
-  FOR DELETE
-  TO authenticated
-  USING (public.is_restaurant_member(restaurant_id));
+create policy menu_categories_delete_member
+  on public.menu_categories
+  for delete
+  to authenticated
+  using (public.is_restaurant_member(restaurant_id));
 
--- site_settings -------------------------------------------------------------
+create policy menu_items_select_public_published
+  on public.menu_items
+  for select
+  to anon
+  using (public.is_restaurant_published(restaurant_id));
 
-CREATE POLICY "site_settings_select_member_or_published"
-  ON public.site_settings
-  FOR SELECT
-  TO anon, authenticated
-  USING (
-    public.is_restaurant_member(restaurant_id)
-    OR public.is_restaurant_published(restaurant_id)
+create policy menu_items_select_member_or_published
+  on public.menu_items
+  for select
+  to authenticated
+  using (
+    public.is_restaurant_published(restaurant_id)
+    or public.is_restaurant_member(restaurant_id)
   );
 
-CREATE POLICY "site_settings_insert_member"
-  ON public.site_settings
-  FOR INSERT
-  TO authenticated
-  WITH CHECK (public.is_restaurant_member(restaurant_id));
+create policy menu_items_insert_member
+  on public.menu_items
+  for insert
+  to authenticated
+  with check (public.is_restaurant_member(restaurant_id));
 
-CREATE POLICY "site_settings_update_member"
-  ON public.site_settings
-  FOR UPDATE
-  TO authenticated
-  USING (public.is_restaurant_member(restaurant_id))
-  WITH CHECK (public.is_restaurant_member(restaurant_id));
+create policy menu_items_update_member
+  on public.menu_items
+  for update
+  to authenticated
+  using (public.is_restaurant_member(restaurant_id))
+  with check (public.is_restaurant_member(restaurant_id));
 
-CREATE POLICY "site_settings_delete_member"
-  ON public.site_settings
-  FOR DELETE
-  TO authenticated
-  USING (public.is_restaurant_member(restaurant_id));
+create policy menu_items_delete_member
+  on public.menu_items
+  for delete
+  to authenticated
+  using (public.is_restaurant_member(restaurant_id));
 
--- media ---------------------------------------------------------------------
+create policy notices_select_public_published
+  on public.notices
+  for select
+  to anon
+  using (public.is_restaurant_published(restaurant_id));
 
-CREATE POLICY "media_select_member_or_published"
-  ON public.media
-  FOR SELECT
-  TO anon, authenticated
-  USING (
-    public.is_restaurant_member(restaurant_id)
-    OR public.is_restaurant_published(restaurant_id)
+create policy notices_select_member_or_published
+  on public.notices
+  for select
+  to authenticated
+  using (
+    public.is_restaurant_published(restaurant_id)
+    or public.is_restaurant_member(restaurant_id)
   );
 
-CREATE POLICY "media_insert_member"
-  ON public.media
-  FOR INSERT
-  TO authenticated
-  WITH CHECK (public.is_restaurant_member(restaurant_id));
+create policy notices_insert_member
+  on public.notices
+  for insert
+  to authenticated
+  with check (public.is_restaurant_member(restaurant_id));
 
-CREATE POLICY "media_update_member"
-  ON public.media
-  FOR UPDATE
-  TO authenticated
-  USING (public.is_restaurant_member(restaurant_id))
-  WITH CHECK (public.is_restaurant_member(restaurant_id));
+create policy notices_update_member
+  on public.notices
+  for update
+  to authenticated
+  using (public.is_restaurant_member(restaurant_id))
+  with check (public.is_restaurant_member(restaurant_id));
 
-CREATE POLICY "media_delete_member"
-  ON public.media
-  FOR DELETE
-  TO authenticated
-  USING (public.is_restaurant_member(restaurant_id));
+create policy notices_delete_member
+  on public.notices
+  for delete
+  to authenticated
+  using (public.is_restaurant_member(restaurant_id));
 
--- ---------------------------------------------------------------------------
--- Grants (RLS enforces access)
--- ---------------------------------------------------------------------------
+create policy site_settings_select_public_published
+  on public.site_settings
+  for select
+  to anon
+  using (public.is_restaurant_published(restaurant_id));
 
-GRANT USAGE ON SCHEMA public TO anon, authenticated;
+create policy site_settings_select_member_or_published
+  on public.site_settings
+  for select
+  to authenticated
+  using (
+    public.is_restaurant_published(restaurant_id)
+    or public.is_restaurant_member(restaurant_id)
+  );
 
-GRANT SELECT ON public.restaurants TO anon, authenticated;
-GRANT SELECT ON public.menu_categories TO anon, authenticated;
-GRANT SELECT ON public.menu_items TO anon, authenticated;
-GRANT SELECT ON public.notices TO anon, authenticated;
-GRANT SELECT ON public.site_settings TO anon, authenticated;
-GRANT SELECT ON public.media TO anon, authenticated;
+create policy site_settings_insert_owner
+  on public.site_settings
+  for insert
+  to authenticated
+  with check (public.is_restaurant_owner(restaurant_id));
 
-GRANT ALL ON public.profiles TO authenticated;
-GRANT ALL ON public.restaurants TO authenticated;
-GRANT ALL ON public.restaurant_members TO authenticated;
-GRANT ALL ON public.menu_categories TO authenticated;
-GRANT ALL ON public.menu_items TO authenticated;
-GRANT ALL ON public.notices TO authenticated;
-GRANT ALL ON public.site_settings TO authenticated;
-GRANT ALL ON public.media TO authenticated;
+create policy site_settings_update_owner
+  on public.site_settings
+  for update
+  to authenticated
+  using (public.is_restaurant_owner(restaurant_id))
+  with check (public.is_restaurant_owner(restaurant_id));
 
-GRANT EXECUTE ON FUNCTION public.is_restaurant_member(uuid) TO anon, authenticated;
-GRANT EXECUTE ON FUNCTION public.is_restaurant_owner(uuid) TO authenticated;
-GRANT EXECUTE ON FUNCTION public.is_restaurant_published(uuid) TO anon, authenticated;
+create policy site_settings_delete_owner
+  on public.site_settings
+  for delete
+  to authenticated
+  using (public.is_restaurant_owner(restaurant_id));
+
+create policy media_select_public_published
+  on public.media
+  for select
+  to anon
+  using (public.is_restaurant_published(restaurant_id));
+
+create policy media_select_member_or_published
+  on public.media
+  for select
+  to authenticated
+  using (
+    public.is_restaurant_published(restaurant_id)
+    or public.is_restaurant_member(restaurant_id)
+  );
+
+create policy media_insert_member
+  on public.media
+  for insert
+  to authenticated
+  with check (public.is_restaurant_member(restaurant_id));
+
+create policy media_update_member
+  on public.media
+  for update
+  to authenticated
+  using (public.is_restaurant_member(restaurant_id))
+  with check (public.is_restaurant_member(restaurant_id));
+
+create policy media_delete_member
+  on public.media
+  for delete
+  to authenticated
+  using (public.is_restaurant_member(restaurant_id));
+
+grant usage on schema public to anon, authenticated;
+
+grant select on public.restaurants to anon, authenticated;
+grant select on public.menu_categories to anon, authenticated;
+grant select on public.menu_items to anon, authenticated;
+grant select on public.notices to anon, authenticated;
+grant select on public.site_settings to anon, authenticated;
+grant select on public.media to anon, authenticated;
+
+grant all on public.profiles to authenticated;
+grant all on public.restaurants to authenticated;
+grant all on public.restaurant_members to authenticated;
+grant all on public.menu_categories to authenticated;
+grant all on public.menu_items to authenticated;
+grant all on public.notices to authenticated;
+grant all on public.site_settings to authenticated;
+grant all on public.media to authenticated;
+
+grant execute on function public.is_restaurant_member(uuid) to authenticated;
+grant execute on function public.is_restaurant_owner(uuid) to authenticated;
+grant execute on function public.is_restaurant_published(uuid) to anon, authenticated;

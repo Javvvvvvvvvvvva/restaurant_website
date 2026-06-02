@@ -20,12 +20,12 @@ export default function NoticesPage() {
               </div>
               <span
                 className={`inline-flex w-fit rounded-full px-3 py-1 text-base font-medium ${
-                  notice.active
+                  notice.is_active
                     ? "bg-emerald-100 text-emerald-800"
                     : "bg-zinc-200 text-zinc-700"
                 }`}
               >
-                {notice.active ? "Active" : "Inactive"}
+                {notice.is_active ? "Active" : "Inactive"}
               </span>
             </div>
           </Card>

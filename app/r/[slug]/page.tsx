@@ -2,6 +2,8 @@ import { notFound } from "next/navigation";
 import Image from "next/image";
 import Card from "@/components/ui/card";
 import {
+  formatMenuPrice,
+  getCategoryNameById,
   getMenuByRestaurantId,
   getNoticesByRestaurantId,
   getRestaurantBySlug,
@@ -21,14 +23,14 @@ export default async function PublicRestaurantPage({ params }: RestaurantPagePro
 
   const menuItems = getMenuByRestaurantId(restaurant.id);
   const activeNotices = getNoticesByRestaurantId(restaurant.id).filter(
-    (notice) => notice.active
+    (notice) => notice.is_active
   );
 
   return (
     <main className="mx-auto w-full max-w-4xl space-y-4 px-4 py-6 md:py-10">
       <section className="overflow-hidden rounded-xl border bg-white">
         <Image
-          src={restaurant.heroImageUrl}
+          src={restaurant.hero_image_url ?? "/vercel.svg"}
           alt={`${restaurant.name} dining room`}
           className="h-52 w-full object-cover md:h-72"
           width={1200}
@@ -64,9 +66,13 @@ export default async function PublicRestaurantPage({ params }: RestaurantPagePro
             <article key={item.id} className="rounded-lg border bg-zinc-50 p-3">
               <div className="flex items-center justify-between gap-3">
                 <h3 className="text-xl font-semibold text-zinc-900">{item.name}</h3>
-                <span className="text-xl font-semibold text-emerald-700">{item.price}</span>
+                <span className="text-xl font-semibold text-emerald-700">
+                  {formatMenuPrice(item.price)}
+                </span>
               </div>
-              <p className="text-base text-zinc-600">{item.category}</p>
+              <p className="text-base text-zinc-600">
+                {getCategoryNameById(item.category_id)}
+              </p>
               {item.description ? <p className="mt-1 text-base text-zinc-700">{item.description}</p> : null}
             </article>
           ))}
