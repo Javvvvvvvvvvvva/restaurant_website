@@ -1,43 +1,75 @@
+import Link from "next/link";
+import { redirect } from "next/navigation";
+import NoticesManagement from "@/components/dashboard/notices/notices-management";
 import Card from "@/components/ui/card";
 import SectionTitle from "@/components/ui/section-title";
-import { demoNotices } from "@/lib/placeholder-data";
+import { getActiveRestaurantForUser } from "@/lib/restaurants/active-restaurant";
+import { createClient } from "@/lib/supabase/server";
+import type { Notice } from "@/types";
 
-export default function NoticesPage() {
+export default async function NoticesPage() {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  if (!user) {
+    redirect("/login");
+  }
+
+  const { restaurant, error } = await getActiveRestaurantForUser();
+
+  if (error) {
+    return (
+      <main className="space-y-4">
+        <SectionTitle title="Notices" description="We could not load your restaurant." />
+        <Card>
+          <p className="text-base text-red-800">{error}</p>
+        </Card>
+      </main>
+    );
+  }
+
+  if (!restaurant) {
+    return (
+      <main className="space-y-4">
+        <SectionTitle
+          title="Notices"
+          description="Create your restaurant before adding notices."
+        />
+        <Card>
+          <Link
+            href="/dashboard"
+            className="inline-flex h-12 items-center justify-center rounded-lg bg-emerald-700 px-5 text-lg font-medium text-white hover:bg-emerald-800"
+          >
+            Go to Dashboard
+          </Link>
+        </Card>
+      </main>
+    );
+  }
+
+  const { data: notices, error: noticesError } = await supabase
+    .from("notices")
+    .select("*")
+    .eq("restaurant_id", restaurant.id)
+    .order("created_at", { ascending: false });
+
+  if (noticesError) {
+    return (
+      <main className="space-y-4">
+        <SectionTitle title="Notices" description="We could not load your notices." />
+        <Card>
+          <p className="text-base text-red-800">{noticesError.message}</p>
+        </Card>
+      </main>
+    );
+  }
+
   return (
-    <main>
-      <SectionTitle
-        title="Notices"
-        description="Share updates such as holiday closures or special hours."
-      />
-
-      <div className="space-y-3">
-        {demoNotices.map((notice) => (
-          <Card key={notice.id}>
-            <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
-              <div>
-                <h2 className="text-xl font-semibold text-zinc-900">{notice.title}</h2>
-                <p className="mt-1 text-base text-zinc-700">{notice.message}</p>
-              </div>
-              <span
-                className={`inline-flex w-fit rounded-full px-3 py-1 text-base font-medium ${
-                  notice.is_active
-                    ? "bg-emerald-100 text-emerald-800"
-                    : "bg-zinc-200 text-zinc-700"
-                }`}
-              >
-                {notice.is_active ? "Active" : "Inactive"}
-              </span>
-            </div>
-          </Card>
-        ))}
-      </div>
-
-      <button
-        type="button"
-        className="mt-4 h-12 rounded-lg bg-emerald-700 px-5 text-lg font-medium text-white hover:bg-emerald-800"
-      >
-        Add Notice
-      </button>
-    </main>
+    <NoticesManagement
+      restaurantName={restaurant.name}
+      notices={(notices ?? []) as Notice[]}
+    />
   );
 }

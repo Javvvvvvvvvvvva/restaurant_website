@@ -1,63 +1,140 @@
+import Link from "next/link";
+import { redirect } from "next/navigation";
+import DesignSettingsForm from "@/components/dashboard/design/design-settings-form";
 import Card from "@/components/ui/card";
 import SectionTitle from "@/components/ui/section-title";
-import { getSiteSettingsByRestaurantId, demoRestaurant } from "@/lib/placeholder-data";
+import { DEFAULT_SITE_SETTINGS } from "@/lib/design/constants";
+import { getActiveRestaurantForUser } from "@/lib/restaurants/active-restaurant";
+import { createClient } from "@/lib/supabase/server";
+import type { SiteSettings } from "@/types";
 
-const templateOptions = ["classic", "warm", "minimal"] as const;
-const colorOptions = ["#14532d", "#9a3412", "#1d4ed8", "#6d28d9"];
+export default async function DesignSettingsPage() {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
 
-export default function DesignSettingsPage() {
-  const siteSettings = getSiteSettingsByRestaurantId(demoRestaurant.id);
+  if (!user) {
+    redirect("/login");
+  }
+
+  const { restaurant, error } = await getActiveRestaurantForUser();
+
+  if (error) {
+    return (
+      <main className="space-y-4">
+        <SectionTitle title="Design Settings" description="We could not load your restaurant." />
+        <Card>
+          <p className="text-base text-red-800">{error}</p>
+        </Card>
+      </main>
+    );
+  }
+
+  if (!restaurant) {
+    return (
+      <main className="space-y-4">
+        <SectionTitle
+          title="Design Settings"
+          description="Create your restaurant before choosing a design."
+        />
+        <Card>
+          <Link
+            href="/dashboard"
+            className="inline-flex h-12 items-center justify-center rounded-lg bg-emerald-700 px-5 text-lg font-medium text-white hover:bg-emerald-800"
+          >
+            Go to Dashboard
+          </Link>
+        </Card>
+      </main>
+    );
+  }
+
+  const { data: membership, error: membershipError } = await supabase
+    .from("restaurant_members")
+    .select("role")
+    .eq("restaurant_id", restaurant.id)
+    .eq("user_id", user.id)
+    .maybeSingle();
+
+  if (membershipError) {
+    return (
+      <main className="space-y-4">
+        <SectionTitle title="Design Settings" description="We could not verify your access." />
+        <Card>
+          <p className="text-base text-red-800">{membershipError.message}</p>
+        </Card>
+      </main>
+    );
+  }
+
+  const canEdit = membership?.role === "owner";
+
+  const { data: initialSettings, error: settingsError } = await supabase
+    .from("site_settings")
+    .select("*")
+    .eq("restaurant_id", restaurant.id)
+    .maybeSingle();
+
+  if (settingsError) {
+    return (
+      <main className="space-y-4">
+        <SectionTitle title="Design Settings" description="We could not load design settings." />
+        <Card>
+          <p className="text-base text-red-800">{settingsError.message}</p>
+        </Card>
+      </main>
+    );
+  }
+
+  let siteSettings = initialSettings;
+
+  if (!siteSettings && canEdit) {
+    const { data: createdSettings, error: createError } = await supabase
+      .from("site_settings")
+      .insert({
+        restaurant_id: restaurant.id,
+        ...DEFAULT_SITE_SETTINGS,
+      })
+      .select("*")
+      .single();
+
+    if (createError) {
+      return (
+        <main className="space-y-4">
+          <SectionTitle title="Design Settings" description="We could not create design settings." />
+          <Card>
+            <p className="text-base text-red-800">{createError.message}</p>
+          </Card>
+        </main>
+      );
+    }
+
+    siteSettings = createdSettings;
+  }
+
+  if (!siteSettings) {
+    return (
+      <main className="space-y-4">
+        <SectionTitle
+          title="Design Settings"
+          description="Design settings are not available yet."
+        />
+        <Card>
+          <p className="text-base text-amber-900">
+            Only the restaurant owner can set up design settings. Please ask the owner to open
+            this page first.
+          </p>
+        </Card>
+      </main>
+    );
+  }
 
   return (
-    <main className="space-y-4">
-      <SectionTitle
-        title="Design Settings"
-        description="Choose a simple template and color style for your website."
-      />
-
-      <Card>
-        <h2 className="text-xl font-semibold text-zinc-900">Template</h2>
-        <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-3">
-          {templateOptions.map((template) => {
-            const selected = siteSettings?.template_id === template;
-            return (
-              <button
-                key={template}
-                type="button"
-                className={`h-12 rounded-lg border text-lg font-medium ${
-                  selected
-                    ? "border-emerald-700 bg-emerald-700 text-white"
-                    : "bg-zinc-50 text-zinc-900"
-                }`}
-              >
-                {template.charAt(0).toUpperCase() + template.slice(1)}
-              </button>
-            );
-          })}
-        </div>
-      </Card>
-
-      <Card>
-        <h2 className="text-xl font-semibold text-zinc-900">Primary Color</h2>
-        <div className="mt-3 flex flex-wrap gap-3">
-          {colorOptions.map((color) => (
-            <button
-              key={color}
-              type="button"
-              aria-label={`Select color ${color}`}
-              className="h-12 w-12 rounded-full border-4 border-white shadow"
-              style={{ backgroundColor: color }}
-            />
-          ))}
-        </div>
-      </Card>
-
-      <button
-        type="button"
-        className="h-12 rounded-lg bg-emerald-700 px-5 text-lg font-medium text-white hover:bg-emerald-800"
-      >
-        Save Design Settings
-      </button>
-    </main>
+    <DesignSettingsForm
+      restaurantName={restaurant.name}
+      settings={siteSettings as SiteSettings}
+      canEdit={canEdit}
+    />
   );
 }
